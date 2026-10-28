@@ -10,6 +10,9 @@ import { errorHandler } from './utils/errors.js';
 export function createApp() {
   const app = express();
 
+  // Trust first proxy (Nginx reverse proxy) for accurate IP resolution in rate limiter
+  app.set('trust proxy', 1);
+
   // Security Headers
   app.use(
     helmet({
