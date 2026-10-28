@@ -1,0 +1,89 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: forwardflow-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-secure_mysql_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-whatsapp_forwarder_saas}
+    ports:
+      - "${MYSQL_HOST_PORT:-3308}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-secure_mysql_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - forwardflow-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: forwardflow-redis
+    restart: always
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_HOST_PORT:-6380}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - forwardflow-net
+
+  backend:
+    build:
+      context: ./server
+      dockerfile: ../docker/Dockerfile.server
+    container_name: forwardflow-backend
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-secure_mysql_password}@mysql:3306/${MYSQL_DATABASE:-whatsapp_forwarder_saas}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_forwarder_saas_2026_very_long_secure_token}
+      SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+      MEDIA_TEMP_DIR: /app/temp_media
+      WHATSAPP_SESSIONS_DIR: /app/sessions
+    volumes:
+      - whatsapp_sessions:/app/sessions
+      - temp_media:/app/temp_media
+    expose:
+      - "5000"
+    networks:
+      - forwardflow-net
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: ../docker/Dockerfile.client
+    container_name: forwardflow-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8088}:80"
+      - "5173:80"
+    networks:
+      - forwardflow-net
+
+volumes:
+  mysql_data:
+  redis_data:
+  whatsapp_sessions:
+  temp_media:
+
+networks:
+  forwardflow-net:
+    driver: bridge

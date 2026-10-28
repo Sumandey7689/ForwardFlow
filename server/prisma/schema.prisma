@@ -1,0 +1,211 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+enum ConnectionStatus {
+  DISCONNECTED
+  CONNECTING
+  QR_READY
+  CONNECTED
+  FAILED
+}
+
+enum ConversationType {
+  COMMUNITY
+  COMMUNITY_ANNOUNCEMENT
+  COMMUNITY_GROUP
+  GROUP
+  INDIVIDUAL
+}
+
+enum JobStatus {
+  RECEIVED
+  QUEUED
+  PROCESSING
+  SENT
+  FAILED
+  RETRY_SCHEDULED
+  UNCERTAIN
+}
+
+model Admin {
+  id              String            @id @default(uuid())
+  email           String            @unique
+  passwordHash    String
+  name            String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  lastLoginAt     DateTime?
+  whatsappAccounts WhatsAppAccount[]
+  forwardingRules ForwardingRule[]
+  auditLogs       AuditLog[]
+
+  @@map("admins")
+}
+
+model WhatsAppAccount {
+  id                        String            @id @default(uuid())
+  adminId                   String
+  admin                     Admin             @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  displayName               String
+  phoneNumber               String?
+  provider                  String            @default("baileys") // "baileys", "mock", etc.
+  providerAccountId         String?
+  connectionStatus          ConnectionStatus  @default(DISCONNECTED)
+  encryptedSessionReference String?           @db.Text
+  lastConnectedAt           DateTime?
+  lastSyncAt                DateTime?
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+
+  conversations             Conversation[]
+  forwardingRules           ForwardingRule[]
+  incomingMessages          IncomingMessage[]
+
+  @@index([adminId])
+  @@index([connectionStatus])
+  @@map("whatsapp_accounts")
+}
+
+model Conversation {
+  id                     String                  @id @default(uuid())
+  whatsappAccountId      String
+  whatsappAccount        WhatsAppAccount         @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  providerConversationId String                  // JID e.g. 123456789@g.us
+  name                   String
+  conversationType       ConversationType        @default(GROUP)
+  parentConversationId   String?                 // If linked to a Community parent JID
+  canReceiveMessages     Boolean                 @default(true)  // Source capable: can we read/receive from it
+  canSendMessages        Boolean                 @default(true)  // Destination capable: can we send to it (e.g. admin permission check)
+  capabilityMetadata     String?                 @db.Text        // JSON string with participants, admin rights, restrictions
+  lastActivityAt         DateTime?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  sourceInRules          ForwardingRule[]        @relation("SourceConversation")
+  destinationInRules     ForwardingDestination[]
+  incomingMessages       IncomingMessage[]
+  forwardingJobs         ForwardingJob[]
+
+  @@unique([whatsappAccountId, providerConversationId])
+  @@index([whatsappAccountId])
+  @@index([conversationType])
+  @@map("conversations")
+}
+
+model ForwardingRule {
+  id                       String                  @id @default(uuid())
+  adminId                  String
+  admin                    Admin                   @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  whatsappAccountId        String
+  whatsappAccount          WhatsAppAccount         @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  name                     String
+  sourceConversationId     String
+  sourceConversation       Conversation            @relation("SourceConversation", fields: [sourceConversationId], references: [id], onDelete: Cascade)
+  enabled                  Boolean                 @default(true)
+  messageTypeConfiguration String                  @db.Text // JSON: {"text": true, "image": true, "video": true, "audio": true, "document": true}
+  formattingConfiguration  String                  @db.Text // JSON: {"includePrefix": false, "prefixText": "", "includeSuffix": false, "suffixText": "", "includeSourceLabel": true, "preserveCaptions": true, "forwardSenderName": false}
+  scheduleConfiguration   String                  @db.Text // JSON: {"allDay": true, "activeDays": [0,1,2,3,4,5,6], "startTime": "00:00", "endTime": "23:59", "timezone": "UTC"}
+  retryConfiguration      String                  @db.Text // JSON: {"maxRetries": 3, "backoffMs": 5000}
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+
+  destinations             ForwardingDestination[]
+  forwardingJobs           ForwardingJob[]
+
+  @@index([adminId])
+  @@index([whatsappAccountId])
+  @@index([sourceConversationId])
+  @@index([enabled])
+  @@map("forwarding_rules")
+}
+
+model ForwardingDestination {
+  id                        String         @id @default(uuid())
+  forwardingRuleId          String
+  forwardingRule            ForwardingRule @relation(fields: [forwardingRuleId], references: [id], onDelete: Cascade)
+  destinationConversationId String
+  destinationConversation   Conversation   @relation(fields: [destinationConversationId], references: [id], onDelete: Cascade)
+  enabled                   Boolean        @default(true)
+  createdAt                 DateTime       @default(now())
+
+  @@unique([forwardingRuleId, destinationConversationId])
+  @@index([forwardingRuleId])
+  @@index([destinationConversationId])
+  @@map("forwarding_destinations")
+}
+
+model IncomingMessage {
+  id                   String          @id @default(uuid())
+  whatsappAccountId    String
+  whatsappAccount      WhatsAppAccount @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  sourceConversationId String
+  sourceConversation   Conversation    @relation(fields: [sourceConversationId], references: [id], onDelete: Cascade)
+  providerMessageId    String          // Provider message ID (e.g., Baileys key.id)
+  senderId             String?         // Participant JID or sender number
+  senderName           String?         // Push name or contact name
+  messageType          String          // "text", "image", "video", "audio", "document", "sticker"
+  contentReference     String?         @db.Text // Media path or hash reference
+  textBody             String?         @db.Text // Extracted text content or caption
+  mediaUrl             String?         @db.Text // Local cached media path if downloaded
+  receivedAt           DateTime        @default(now())
+  createdAt            DateTime        @default(now())
+
+  forwardingJobs       ForwardingJob[]
+
+  @@unique([whatsappAccountId, sourceConversationId, providerMessageId])
+  @@index([whatsappAccountId])
+  @@index([sourceConversationId])
+  @@index([receivedAt])
+  @@map("incoming_messages")
+}
+
+model ForwardingJob {
+  id                        String         @id @default(uuid())
+  forwardingRuleId          String
+  forwardingRule            ForwardingRule @relation(fields: [forwardingRuleId], references: [id], onDelete: Cascade)
+  incomingMessageId         String
+  incomingMessage           IncomingMessage @relation(fields: [incomingMessageId], references: [id], onDelete: Cascade)
+  destinationConversationId String
+  destinationConversation   Conversation   @relation(fields: [destinationConversationId], references: [id], onDelete: Cascade)
+  status                    JobStatus      @default(QUEUED)
+  attemptCount              Int            @default(0)
+  providerSentMessageId     String?        // Target message ID after send
+  idempotencyKey            String         @unique // sha256(accountId:sourceConvId:messageId:ruleId:destConvId)
+  errorCode                 String?
+  errorMessage              String?        @db.Text
+  nextRetryAt               DateTime?
+  completedAt               DateTime?
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
+
+  @@index([forwardingRuleId])
+  @@index([incomingMessageId])
+  @@index([destinationConversationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("forwarding_jobs")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  adminId      String
+  admin        Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  action       String   // e.g. "ACCOUNT_CONNECT", "RULE_CREATE", "JOB_RETRY", "LOGIN"
+  resourceType String   // e.g. "WhatsAppAccount", "ForwardingRule", "ForwardingJob"
+  resourceId   String?
+  metadata     String?  @db.Text // JSON with additional context
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

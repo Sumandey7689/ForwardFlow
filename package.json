@@ -1,0 +1,31 @@
+{
+  "name": "whatsapp-community-auto-forwarder-saas",
+  "version": "1.0.0",
+  "description": "WhatsApp Community Auto Forwarder SaaS - Production Platform",
+  "scripts": {
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build:server": "cd server && npm run build",
+    "build:client": "cd client && npm run build",
+    "build": "npm run build:server && npm run build:client",
+    "test": "cd server && npm test",
+    "setup:admin": "cd server && npm run setup:admin",
+    "prisma:push": "cd server && npm run prisma:push",
+    "prisma:generate": "cd server && npm run prisma:generate",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down"
+  },
+  "keywords": [
+    "whatsapp",
+    "community",
+    "auto-forwarder",
+    "saas",
+    "baileys",
+    "bullmq",
+    "express",
+    "react",
+    "typescript"
+  ],
+  "author": "Antigravity Engineering",
+  "license": "MIT"
+}

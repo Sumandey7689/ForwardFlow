@@ -1,0 +1,7 @@
+node_modules
+dist
+sessions
+temp_media
+.git
+.vscode
+.env

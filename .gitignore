@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Production builds
+dist/
+*/dist/
+build/
+*/build/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.env
+*.env.local
+
+# WhatsApp session data & cryptographic keys
+sessions/
+*/sessions/
+whatsapp_sessions/
+*/whatsapp_sessions/
+
+# Temporary media files and uploads
+temp_media/
+*/temp_media/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test and coverage
+coverage/
+*.lcov
+
+# IDE & Editor configs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# TypeScript cache
+*.tsbuildinfo

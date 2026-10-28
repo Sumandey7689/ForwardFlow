@@ -1,0 +1,54 @@
+# Multi-stage production Dockerfile for ForwardFlow Backend
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache openssl
+
+# Install build dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Copy Prisma schema and generate client
+COPY prisma ./prisma/
+RUN npx prisma generate
+
+# Copy source and build TypeScript
+COPY tsconfig.json ./
+COPY src ./src/
+RUN npm run build
+
+# Production runtime stage
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+RUN apk add --no-cache openssl
+
+ENV NODE_ENV=production
+ENV PORT=5000
+
+# Install runtime dependencies
+COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# Copy generated Prisma client from builder
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
+
+# Copy built artifacts and prisma schemas
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+
+# Create isolated session & media directories with proper permissions
+RUN mkdir -p ./sessions ./temp_media && chown -R node:node /app
+
+# Run as non-root user for security
+USER node
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:5000/api/v1/health || exit 1
+
+CMD ["node", "dist/index.js"]
