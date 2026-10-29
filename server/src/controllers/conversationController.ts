@@ -5,6 +5,7 @@ import { emitToAdmin } from '../socket/socketManager.js';
 import { AppError } from '../utils/errors.js';
 import { logger } from '../config/logger.js';
 import { ConversationType } from '../types/index.js';
+import { parseMultiplePhoneNumbers } from '../utils/phone.js';
 
 export async function syncConversations(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -189,6 +190,75 @@ export async function getCapabilities(req: Request, res: Response, next: NextFun
       data: {
         provider: account.provider,
         capabilities,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function addCustomPhoneNumbers(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const adminId = req.admin!.id;
+    const { id: accountId } = req.params;
+    const { phoneNumbers } = req.body;
+
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: { id: accountId, adminId },
+    });
+
+    if (!account) {
+      throw new AppError('WhatsApp account not found', 404, 'NOT_FOUND');
+    }
+
+    if (!phoneNumbers || (Array.isArray(phoneNumbers) && phoneNumbers.length === 0)) {
+      throw new AppError('Please provide at least one phone number', 400, 'INVALID_INPUT');
+    }
+
+    const parsedNumbers = parseMultiplePhoneNumbers(phoneNumbers);
+    if (parsedNumbers.length === 0) {
+      throw new AppError('No valid phone numbers found', 400, 'INVALID_INPUT');
+    }
+
+    const conversations = [];
+    for (const item of parsedNumbers) {
+      const conv = await prisma.conversation.upsert({
+        where: {
+          whatsappAccountId_providerConversationId: {
+            whatsappAccountId: account.id,
+            providerConversationId: item.jid,
+          },
+        },
+        update: {
+          name: item.formatted,
+          canSendMessages: true,
+          canReceiveMessages: true,
+        },
+        create: {
+          whatsappAccountId: account.id,
+          providerConversationId: item.jid,
+          name: item.formatted,
+          conversationType: 'INDIVIDUAL',
+          canSendMessages: true,
+          canReceiveMessages: true,
+          capabilityMetadata: JSON.stringify({
+            phoneNumber: item.digits,
+            formattedPhone: item.formatted,
+            isPersonalNumber: true,
+          }),
+        },
+      });
+
+      conversations.push(conv);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        conversations: conversations.map((c) => ({
+          ...c,
+          capabilityMetadata: c.capabilityMetadata ? JSON.parse(c.capabilityMetadata) : null,
+        })),
       },
     });
   } catch (error) {

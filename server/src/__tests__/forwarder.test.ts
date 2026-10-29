@@ -201,6 +201,30 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
         expect(conv.conversationType).toBe('COMMUNITY_ANNOUNCEMENT');
       }
     });
+
+    it('should add multiple personal numbers with automatic +91 country code', async () => {
+      const res = await request(app)
+        .post(`/api/v1/whatsapp/accounts/${accountId}/custom-numbers`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          phoneNumbers: ['9810088950', '9820011223', '+91 98300 44556'],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.conversations).toHaveLength(3);
+
+      const [c1, c2, c3] = res.body.data.conversations;
+      expect(c1.providerConversationId).toBe('919810088950@s.whatsapp.net');
+      expect(c1.conversationType).toBe('INDIVIDUAL');
+      expect(c1.name).toBe('+91 98100 88950');
+
+      expect(c2.providerConversationId).toBe('919820011223@s.whatsapp.net');
+      expect(c2.name).toBe('+91 98200 11223');
+
+      expect(c3.providerConversationId).toBe('919830044556@s.whatsapp.net');
+      expect(c3.name).toBe('+91 98300 44556');
+    });
   });
 
   describe('4. Forwarding Rule Builder & Validation Safeguards', () => {
@@ -285,6 +309,28 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
       expect(activateRes.status).toBe(200);
       expect(activateRes.body.data.rule.enabled).toBe(true);
     });
+
+    it('should create a forwarding rule with direct personal phone numbers', async () => {
+      const res = await request(app)
+        .post('/api/v1/forwarding-rules')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Announcements -> Personal Number Broadcast',
+          whatsappAccountId: accountId,
+          sourceConversationId: announcementsConvId,
+          customPhoneNumbers: ['9999988888'],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      const destinations = res.body.data.rule.destinations;
+      expect(destinations.length).toBeGreaterThanOrEqual(1);
+      const personalDest = destinations.find(
+        (d: any) => d.destinationConversation.providerConversationId === '919999988888@s.whatsapp.net'
+      );
+      expect(personalDest).toBeDefined();
+      expect(personalDest.destinationConversation.conversationType).toBe('INDIVIDUAL');
+    });
   });
 
   describe('5. Real-Time Forwarding Engine, Idempotency & Loop Prevention', () => {
@@ -308,11 +354,18 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
       await new Promise((r) => setTimeout(r, 600));
 
       const sentMessages = provider.getSentMessages();
-      expect(sentMessages.length).toBe(1);
-      expect(sentMessages[0].destinationJid).toBe('120363044112233448@g.us'); // General Group JID
-      expect(sentMessages[0].payload.text).toContain('⚡ [BROADCAST]');
-      expect(sentMessages[0].payload.text).toContain('Forwarded from:');
-      expect(sentMessages[0].payload.text).toContain('Quarterly Town Hall is starting in 15 minutes!');
+      expect(sentMessages.length).toBe(2);
+
+      const groupMsg = sentMessages.find((m) => m.destinationJid === '120363044112233448@g.us');
+      const personalMsg = sentMessages.find((m) => m.destinationJid === '919999988888@s.whatsapp.net');
+
+      expect(groupMsg).toBeDefined();
+      expect(personalMsg).toBeDefined();
+
+      expect(groupMsg!.payload.text).toContain('⚡ [BROADCAST]');
+      expect(groupMsg!.payload.text).toContain('Forwarded from:');
+      expect(groupMsg!.payload.text).toContain('Quarterly Town Hall is starting in 15 minutes!');
+      expect(personalMsg!.payload.text).toContain('Quarterly Town Hall is starting in 15 minutes!');
     });
 
     it('should prevent loop: drop messages with fromMe = true', async () => {
@@ -381,7 +434,7 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
       expect(res.body.success).toBe(true);
       expect(res.body.data.metrics.totalAccounts).toBe(1);
       expect(res.body.data.metrics.connectedAccounts).toBe(1);
-      expect(res.body.data.metrics.activeRules).toBe(1);
+      expect(res.body.data.metrics.activeRules).toBe(2);
       expect(res.body.data.metrics.messagesReceivedToday).toBeGreaterThan(0);
       expect(res.body.data.metrics.forwardingAttemptsToday).toBeGreaterThan(0);
       expect(res.body.data.hourlyActivity.length).toBe(24);

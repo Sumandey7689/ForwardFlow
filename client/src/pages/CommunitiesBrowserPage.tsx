@@ -51,6 +51,7 @@ export const CommunitiesBrowserPage: React.FC = () => {
     { id: 'COMMUNITY_ANNOUNCEMENT', label: '📢 Announcements' },
     { id: 'COMMUNITY_GROUP', label: 'Linked Groups' },
     { id: 'GROUP', label: 'Regular Groups' },
+    { id: 'INDIVIDUAL', label: '👤 Personal Numbers' },
   ];
 
   return (

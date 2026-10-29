@@ -3,13 +3,15 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma.js';
 import { emitToAdmin } from '../socket/socketManager.js';
 import { AppError } from '../utils/errors.js';
+import { parseMultiplePhoneNumbers } from '../utils/phone.js';
 
 export const createRuleSchema = z.object({
   body: z.object({
     name: z.string().min(2, 'Rule name is required'),
     whatsappAccountId: z.string().uuid(),
     sourceConversationId: z.string().uuid(),
-    destinationConversationIds: z.array(z.string().uuid()).min(1, 'At least one destination conversation is required'),
+    destinationConversationIds: z.array(z.string().uuid()).default([]),
+    customPhoneNumbers: z.array(z.string()).default([]).optional(),
     messageTypes: z.object({
       text: z.boolean().default(true),
       image: z.boolean().default(true),
@@ -52,7 +54,10 @@ export const createRuleSchema = z.object({
       backoffMs: z.number().int().min(1000).max(60000).default(5000),
     }).default({ maxRetries: 3, backoffMs: 5000 }).optional(),
     enabled: z.boolean().default(true),
-  }),
+  }).refine(
+    (data) => (data.destinationConversationIds && data.destinationConversationIds.length > 0) || (data.customPhoneNumbers && data.customPhoneNumbers.length > 0),
+    { message: 'At least one destination conversation or personal phone number is required' }
+  ),
 });
 
 export async function getRules(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -141,7 +146,8 @@ export async function createRule(req: Request, res: Response, next: NextFunction
       name,
       whatsappAccountId,
       sourceConversationId,
-      destinationConversationIds,
+      destinationConversationIds = [],
+      customPhoneNumbers = [],
       messageTypes,
       formatting,
       schedule,
@@ -165,20 +171,63 @@ export async function createRule(req: Request, res: Response, next: NextFunction
       throw new AppError('Source conversation not found', 404, 'SOURCE_NOT_FOUND');
     }
 
+    // Process custom personal phone numbers (auto-adds +91 if 10-digit number)
+    const allDestinationIds: string[] = [...(destinationConversationIds || [])];
+
+    if (Array.isArray(customPhoneNumbers) && customPhoneNumbers.length > 0) {
+      const parsedNumbers = parseMultiplePhoneNumbers(customPhoneNumbers);
+      for (const item of parsedNumbers) {
+        const conv = await prisma.conversation.upsert({
+          where: {
+            whatsappAccountId_providerConversationId: {
+              whatsappAccountId: account.id,
+              providerConversationId: item.jid,
+            },
+          },
+          update: {
+            name: item.formatted,
+            canSendMessages: true,
+            canReceiveMessages: true,
+          },
+          create: {
+            whatsappAccountId: account.id,
+            providerConversationId: item.jid,
+            name: item.formatted,
+            conversationType: 'INDIVIDUAL',
+            canSendMessages: true,
+            canReceiveMessages: true,
+            capabilityMetadata: JSON.stringify({
+              phoneNumber: item.digits,
+              formattedPhone: item.formatted,
+              isPersonalNumber: true,
+            }),
+          },
+        });
+
+        if (!allDestinationIds.includes(conv.id)) {
+          allDestinationIds.push(conv.id);
+        }
+      }
+    }
+
+    if (allDestinationIds.length === 0) {
+      throw new AppError('At least one destination conversation or personal phone number is required', 400, 'NO_DESTINATIONS');
+    }
+
     // Verify destinations
     const destinations = await prisma.conversation.findMany({
       where: {
-        id: { in: destinationConversationIds },
+        id: { in: allDestinationIds },
         whatsappAccountId,
       },
     });
 
-    if (destinations.length !== destinationConversationIds.length) {
+    if (destinations.length !== allDestinationIds.length) {
       throw new AppError('One or more destination conversations were not found', 400, 'INVALID_DESTINATIONS');
     }
 
     // Disallow source as destination
-    if (destinationConversationIds.includes(sourceConversationId)) {
+    if (allDestinationIds.includes(sourceConversationId)) {
       throw new AppError('Source conversation cannot also be a destination (prevents message loop)', 400, 'LOOP_PREVENTION_ERROR');
     }
 
@@ -210,7 +259,7 @@ export async function createRule(req: Request, res: Response, next: NextFunction
       });
 
       await tx.forwardingDestination.createMany({
-        data: destinationConversationIds.map((destId: string) => ({
+        data: allDestinationIds.map((destId: string) => ({
           forwardingRuleId: rule.id,
           destinationConversationId: destId,
           enabled: true,
