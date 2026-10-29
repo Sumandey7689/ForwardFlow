@@ -35,6 +35,24 @@ services:
     networks:
       - forwardflow-net
 
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: forwardflow-phpmyadmin
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD:-secure_mysql_password}
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "${PMA_PORT:-8085}:80"
+    networks:
+      - forwardflow-net
+
   backend:
     build:
       context: ./server
