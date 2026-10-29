@@ -12,6 +12,8 @@ export const createRuleSchema = z.object({
     sourceConversationId: z.string().uuid(),
     destinationConversationIds: z.array(z.string().uuid()).default([]),
     customPhoneNumbers: z.array(z.string()).default([]).optional(),
+    direction: z.enum(['RECEIVED', 'SENT', 'BOTH']).default('BOTH').optional(),
+    bidirectional: z.boolean().default(false).optional(),
     messageTypes: z.object({
       text: z.boolean().default(true),
       image: z.boolean().default(true),
@@ -58,6 +60,44 @@ export const createRuleSchema = z.object({
     (data) => (data.destinationConversationIds && data.destinationConversationIds.length > 0) || (data.customPhoneNumbers && data.customPhoneNumbers.length > 0),
     { message: 'At least one destination conversation or personal phone number is required' }
   ),
+});
+
+export const updateRuleSchema = z.object({
+  body: z.object({
+    name: z.string().min(2).optional(),
+    direction: z.enum(['RECEIVED', 'SENT', 'BOTH']).optional(),
+    bidirectional: z.boolean().optional(),
+    destinationConversationIds: z.array(z.string().uuid()).optional(),
+    customPhoneNumbers: z.array(z.string()).optional(),
+    messageTypes: z.object({
+      text: z.boolean().optional(),
+      image: z.boolean().optional(),
+      video: z.boolean().optional(),
+      audio: z.boolean().optional(),
+      document: z.boolean().optional(),
+    }).optional(),
+    formatting: z.object({
+      includePrefix: z.boolean().optional(),
+      prefixText: z.string().optional(),
+      includeSuffix: z.boolean().optional(),
+      suffixText: z.string().optional(),
+      includeSourceLabel: z.boolean().optional(),
+      preserveCaptions: z.boolean().optional(),
+      forwardSenderName: z.boolean().optional(),
+    }).optional(),
+    schedule: z.object({
+      allDay: z.boolean().optional(),
+      activeDays: z.array(z.number()).optional(),
+      startTime: z.string().optional(),
+      endTime: z.string().optional(),
+      timezone: z.string().optional(),
+    }).optional(),
+    retry: z.object({
+      maxRetries: z.number().int().min(0).max(10).optional(),
+      backoffMs: z.number().int().min(1000).max(60000).optional(),
+    }).optional(),
+    enabled: z.boolean().optional(),
+  }),
 });
 
 export async function getRules(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -148,6 +188,8 @@ export async function createRule(req: Request, res: Response, next: NextFunction
       sourceConversationId,
       destinationConversationIds = [],
       customPhoneNumbers = [],
+      direction = 'BOTH',
+      bidirectional = false,
       messageTypes,
       formatting,
       schedule,
@@ -251,6 +293,8 @@ export async function createRule(req: Request, res: Response, next: NextFunction
           name,
           sourceConversationId,
           enabled: enabled ?? true,
+          direction: direction || 'BOTH',
+          bidirectional: Boolean(bidirectional),
           messageTypeConfiguration: JSON.stringify(messageTypes || { text: true, image: true, video: true, audio: true, document: true }),
           formattingConfiguration: JSON.stringify(formatting || { includeSourceLabel: true, forwardSenderName: false, includePrefix: false, prefixText: '', includeSuffix: false, suffixText: '', preserveCaptions: true }),
           scheduleConfiguration: JSON.stringify(schedule || { allDay: true, activeDays: [0, 1, 2, 3, 4, 5, 6], startTime: '00:00', endTime: '23:59', timezone: 'UTC' }),
@@ -297,6 +341,161 @@ export async function createRule(req: Request, res: Response, next: NextFunction
     res.status(201).json({
       success: true,
       data: { rule: newRule },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateRule(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const adminId = req.admin!.id;
+    const { id } = req.params;
+    const {
+      name,
+      direction,
+      bidirectional,
+      destinationConversationIds,
+      customPhoneNumbers,
+      messageTypes,
+      formatting,
+      schedule,
+      retry,
+      enabled,
+    } = req.body;
+
+    const existingRule = await prisma.forwardingRule.findFirst({
+      where: { id, adminId },
+      include: {
+        whatsappAccount: true,
+        destinations: true,
+      },
+    });
+
+    if (!existingRule) {
+      throw new AppError('Forwarding rule not found', 404, 'NOT_FOUND');
+    }
+
+    let allDestinationIds: string[] | undefined = undefined;
+
+    if (destinationConversationIds !== undefined || customPhoneNumbers !== undefined) {
+      allDestinationIds = [...(destinationConversationIds || [])];
+
+      if (Array.isArray(customPhoneNumbers) && customPhoneNumbers.length > 0) {
+        const parsedNumbers = parseMultiplePhoneNumbers(customPhoneNumbers);
+        for (const item of parsedNumbers) {
+          const conv = await prisma.conversation.upsert({
+            where: {
+              whatsappAccountId_providerConversationId: {
+                whatsappAccountId: existingRule.whatsappAccountId,
+                providerConversationId: item.jid,
+              },
+            },
+            update: {
+              name: item.formatted,
+              canSendMessages: true,
+              canReceiveMessages: true,
+            },
+            create: {
+              whatsappAccountId: existingRule.whatsappAccountId,
+              providerConversationId: item.jid,
+              name: item.formatted,
+              conversationType: 'INDIVIDUAL',
+              canSendMessages: true,
+              canReceiveMessages: true,
+              capabilityMetadata: JSON.stringify({
+                phoneNumber: item.digits,
+                formattedPhone: item.formatted,
+                isPersonalNumber: true,
+              }),
+            },
+          });
+
+          if (!allDestinationIds.includes(conv.id)) {
+            allDestinationIds.push(conv.id);
+          }
+        }
+      }
+
+      if (allDestinationIds.length === 0) {
+        throw new AppError('At least one destination conversation or personal phone number is required', 400, 'NO_DESTINATIONS');
+      }
+
+      // Disallow source conversation as destination
+      if (allDestinationIds.includes(existingRule.sourceConversationId)) {
+        throw new AppError('Source conversation cannot also be a destination (prevents message loop)', 400, 'LOOP_PREVENTION_ERROR');
+      }
+    }
+
+    const updatedRule = await prisma.$transaction(async (tx) => {
+      const dataToUpdate: any = {};
+      if (name !== undefined) dataToUpdate.name = name;
+      if (direction !== undefined) dataToUpdate.direction = direction;
+      if (bidirectional !== undefined) dataToUpdate.bidirectional = Boolean(bidirectional);
+      if (enabled !== undefined) dataToUpdate.enabled = Boolean(enabled);
+      if (messageTypes !== undefined) dataToUpdate.messageTypeConfiguration = JSON.stringify(messageTypes);
+      if (formatting !== undefined) dataToUpdate.formattingConfiguration = JSON.stringify(formatting);
+      if (schedule !== undefined) dataToUpdate.scheduleConfiguration = JSON.stringify(schedule);
+      if (retry !== undefined) dataToUpdate.retryConfiguration = JSON.stringify(retry);
+
+      await tx.forwardingRule.update({
+        where: { id },
+        data: dataToUpdate,
+      });
+
+      if (allDestinationIds !== undefined) {
+        await tx.forwardingDestination.deleteMany({
+          where: { forwardingRuleId: id },
+        });
+
+        await tx.forwardingDestination.createMany({
+          data: allDestinationIds.map((destId: string) => ({
+            forwardingRuleId: id,
+            destinationConversationId: destId,
+            enabled: true,
+          })),
+        });
+      }
+
+      return tx.forwardingRule.findUnique({
+        where: { id },
+        include: {
+          whatsappAccount: true,
+          sourceConversation: true,
+          destinations: {
+            include: { destinationConversation: true },
+          },
+        },
+      });
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        adminId,
+        action: 'RULE_UPDATED',
+        resourceType: 'ForwardingRule',
+        resourceId: id,
+        metadata: JSON.stringify({ name: updatedRule!.name, direction: updatedRule!.direction, bidirectional: updatedRule!.bidirectional }),
+        ipAddress: req.ip || req.socket.remoteAddress || 'unknown',
+      },
+    });
+
+    emitToAdmin(adminId, 'forwarding:rule-status-changed', {
+      ruleId: id,
+      enabled: updatedRule!.enabled,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        rule: {
+          ...updatedRule,
+          messageTypeConfiguration: JSON.parse(updatedRule!.messageTypeConfiguration || '{}'),
+          formattingConfiguration: JSON.parse(updatedRule!.formattingConfiguration || '{}'),
+          scheduleConfiguration: JSON.parse(updatedRule!.scheduleConfiguration || '{}'),
+          retryConfiguration: JSON.parse(updatedRule!.retryConfiguration || '{}'),
+        },
+      },
     });
   } catch (error) {
     next(error);

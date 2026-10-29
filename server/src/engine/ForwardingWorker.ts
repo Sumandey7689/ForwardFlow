@@ -5,6 +5,7 @@ import { emitToAdmin } from '../socket/socketManager.js';
 import { logger } from '../config/logger.js';
 import { FormattingConfiguration, RetryConfiguration } from '../types/index.js';
 import { ForwardingJobData } from './ForwardingQueue.js';
+import { ForwardingEngine } from './ForwardingEngine.js';
 
 export async function processForwardingJob(data: ForwardingJobData): Promise<void> {
   const { forwardingJobId } = data;
@@ -138,6 +139,9 @@ export async function processForwardingJob(data: ForwardingJobData): Promise<voi
 
     // 6. Send message
     const sendResult = await provider.sendMessage(destinationJid, payload);
+    if (sendResult?.providerMessageId) {
+      ForwardingEngine.registerAutomatedMessageId(sendResult.providerMessageId);
+    }
 
     // 7. Success state
     const completedJob = await prisma.forwardingJob.update({

@@ -88,6 +88,8 @@ export interface ForwardingRule {
   sourceConversationId: string;
   sourceConversation: Conversation;
   enabled: boolean;
+  direction?: 'RECEIVED' | 'SENT' | 'BOTH';
+  bidirectional?: boolean;
   messageTypeConfiguration: {
     text: boolean;
     image: boolean;

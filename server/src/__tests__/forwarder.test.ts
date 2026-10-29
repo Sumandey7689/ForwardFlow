@@ -294,6 +294,22 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
       createdRuleId = res.body.data.rule.id;
     });
 
+    it('should update/edit an existing forwarding rule (name, direction, bidirectional)', async () => {
+      const editRes = await request(app)
+        .patch(`/api/v1/forwarding-rules/${createdRuleId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Updated: Community Announcements -> General Group',
+          direction: 'BOTH',
+          bidirectional: false,
+        });
+
+      expect(editRes.status).toBe(200);
+      expect(editRes.body.success).toBe(true);
+      expect(editRes.body.data.rule.name).toBe('Updated: Community Announcements -> General Group');
+      expect(editRes.body.data.rule.direction).toBe('BOTH');
+    });
+
     it('should allow pausing and activating a forwarding rule', async () => {
       const pauseRes = await request(app)
         .post(`/api/v1/forwarding-rules/${createdRuleId}/pause`)
@@ -371,17 +387,20 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
       expect(personalMsg!.payload.text).toContain('Quarterly Town Hall is starting in 15 minutes!');
     });
 
-    it('should prevent loop: drop messages with fromMe = true', async () => {
+    it('should prevent loop: drop messages with fromMe = true when message is automated', async () => {
       const provider = WhatsAppProviderFactory.getInstance(accountId) as MockWhatsAppProvider;
       // Wait for any previous pending jobs to settle before clearing
       await new Promise((r) => setTimeout(r, 200));
       provider.clearSentMessages();
 
+      // Register automated message ID (echo prevention)
+      ForwardingEngine.registerAutomatedMessageId('msg_test_loop_002');
+
       provider.simulateIncomingMessage({
         id: 'msg_test_loop_002',
         sourceJid: '120363044112233446@g.us',
         textBody: 'Message sent by ourselves that should never be re-forwarded',
-        fromMe: true, // From ourselves!
+        fromMe: true, // Automated echo
       });
 
       await new Promise((r) => setTimeout(r, 400));
@@ -436,6 +455,71 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
       expect(p2pSent.length).toBe(1);
       expect(p2pSent[0].destinationJid).toBe('919123456789@s.whatsapp.net');
       expect(p2pSent[0].payload.text).toContain('Hello, need urgent assistance on invoice #1042');
+    });
+
+    it('should forward messages sent by me (fromMe: true) when rule direction permits SENT or BOTH', async () => {
+      const provider = WhatsAppProviderFactory.getInstance(accountId) as MockWhatsAppProvider;
+      provider.clearSentMessages();
+
+      // Simulate message typed by human user in source conversation (not an automated message)
+      provider.simulateIncomingMessage({
+        id: 'msg_human_sent_001',
+        sourceJid: '919876543210@s.whatsapp.net',
+        senderJid: '919876543210@s.whatsapp.net',
+        senderName: 'Me',
+        textBody: 'Outgoing message sent by me from WhatsApp phone',
+        messageType: 'text',
+        fromMe: true, // Sent by me!
+      });
+
+      for (let i = 0; i < 30; i++) {
+        if (provider.getSentMessages().length >= 1) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      const sent = provider.getSentMessages();
+      expect(sent.length).toBeGreaterThanOrEqual(1);
+      expect(sent[0].payload.text).toContain('Outgoing message sent by me from WhatsApp phone');
+    });
+
+    it('should support two-way / bidirectional forwarding from destination back to source', async () => {
+      const provider = WhatsAppProviderFactory.getInstance(accountId) as MockWhatsAppProvider;
+      provider.clearSentMessages();
+
+      // Enable bidirectional on the P2P rule
+      const rulesRes = await request(app)
+        .get('/api/v1/forwarding-rules')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      const p2pRule = rulesRes.body.data.rules.find((r: any) => r.name.includes('P2P Contact'));
+      expect(p2pRule).toBeDefined();
+
+      await request(app)
+        .patch(`/api/v1/forwarding-rules/${p2pRule.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ bidirectional: true, direction: 'BOTH' });
+
+      // Now simulate a reply arriving in the DESTINATION (919123456789@s.whatsapp.net)
+      provider.simulateIncomingMessage({
+        id: 'msg_reply_from_dest_001',
+        sourceJid: '919123456789@s.whatsapp.net',
+        senderJid: '919123456789@s.whatsapp.net',
+        senderName: 'Client Support Agent',
+        textBody: 'Thank you for reaching out, invoice #1042 has been verified.',
+        messageType: 'text',
+        fromMe: false,
+      });
+
+      for (let i = 0; i < 30; i++) {
+        if (provider.getSentMessages().length >= 1) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      const replySent = provider.getSentMessages();
+      expect(replySent.length).toBe(1);
+      // Destination of reverse forward should be source contact (919876543210@s.whatsapp.net)
+      expect(replySent[0].destinationJid).toBe('919876543210@s.whatsapp.net');
+      expect(replySent[0].payload.text).toContain('Thank you for reaching out, invoice #1042 has been verified.');
     });
 
     it('should enforce idempotency and never process duplicate message twice for the same rule', async () => {

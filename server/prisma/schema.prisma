@@ -109,6 +109,8 @@ model ForwardingRule {
   sourceConversationId     String
   sourceConversation       Conversation            @relation("SourceConversation", fields: [sourceConversationId], references: [id], onDelete: Cascade)
   enabled                  Boolean                 @default(true)
+  direction                String                  @default("BOTH") // "RECEIVED", "SENT", "BOTH"
+  bidirectional            Boolean                 @default(false)  // If true, also forwards messages from destinations back to source
   messageTypeConfiguration String                  @db.Text // JSON: {"text": true, "image": true, "video": true, "audio": true, "document": true}
   formattingConfiguration  String                  @db.Text // JSON: {"includePrefix": false, "prefixText": "", "includeSuffix": false, "suffixText": "", "includeSourceLabel": true, "preserveCaptions": true, "forwardSenderName": false}
   scheduleConfiguration   String                  @db.Text // JSON: {"allDay": true, "activeDays": [0,1,2,3,4,5,6], "startTime": "00:00", "endTime": "23:59", "timezone": "UTC"}

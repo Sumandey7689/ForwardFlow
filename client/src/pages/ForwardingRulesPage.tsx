@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -15,13 +15,19 @@ import {
   Video,
   FileText,
   Volume2,
+  Pencil,
+  Repeat,
+  Inbox,
+  Send,
 } from 'lucide-react';
 import { api } from '../api/client.js';
 import { ForwardingRule } from '../types/index.js';
 import { ConversationTypeBadge } from '../components/UI/StatusBadge.js';
+import { EditRuleModal } from '../components/Rules/EditRuleModal.js';
 
 export const ForwardingRulesPage: React.FC = () => {
   const queryClient = useQueryClient();
+  const [editingRule, setEditingRule] = useState<ForwardingRule | null>(null);
 
   const { data, isLoading } = useQuery<{ rules: ForwardingRule[] }>({
     queryKey: ['forwarding-rules'],
@@ -77,7 +83,7 @@ export const ForwardingRulesPage: React.FC = () => {
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 {/* Rule Title & State */}
                 <div className="space-y-2">
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-base font-bold text-slate-900">{rule.name}</h3>
                     <span
                       className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${
@@ -88,6 +94,35 @@ export const ForwardingRulesPage: React.FC = () => {
                     >
                       {rule.enabled ? 'Active Engine' : 'Paused'}
                     </span>
+
+                    {/* Direction Badge */}
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                      {rule.direction === 'SENT' ? (
+                        <>
+                          <Send className="w-3 h-3 text-emerald-600" />
+                          Sent Only
+                        </>
+                      ) : rule.direction === 'RECEIVED' ? (
+                        <>
+                          <Inbox className="w-3 h-3 text-blue-600" />
+                          Received Only
+                        </>
+                      ) : (
+                        <>
+                          <Repeat className="w-3 h-3 text-indigo-600" />
+                          Sent & Received
+                        </>
+                      )}
+                    </span>
+
+                    {/* Bidirectional Badge */}
+                    {rule.bidirectional && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                        <Repeat className="w-3 h-3" />
+                        Two-Way Sync
+                      </span>
+                    )}
+
                     <span className="text-xs text-slate-400">
                       Account: <strong className="text-slate-700">{rule.whatsappAccount.displayName}</strong>
                     </span>
@@ -119,7 +154,16 @@ export const ForwardingRulesPage: React.FC = () => {
                 </div>
 
                 {/* Right Controls */}
-                <div className="flex items-center gap-3 self-end lg:self-center">
+                <div className="flex items-center gap-2.5 self-end lg:self-center">
+                  <button
+                    onClick={() => setEditingRule(rule)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors shadow-2xs"
+                    title="Edit rule settings"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-slate-500" />
+                    Edit Rule
+                  </button>
+
                   <button
                     onClick={() => {
                       if (rule.enabled) {
@@ -221,6 +265,13 @@ export const ForwardingRulesPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Edit Rule Modal */}
+      <EditRuleModal
+        rule={editingRule}
+        isOpen={Boolean(editingRule)}
+        onClose={() => setEditingRule(null)}
+      />
     </div>
   );
 };

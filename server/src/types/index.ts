@@ -70,6 +70,8 @@ export interface NormalizedMessage {
   rawPayload?: any;
 }
 
+export type ForwardDirection = 'RECEIVED' | 'SENT' | 'BOTH';
+
 export interface MessageTypeConfiguration {
   text: boolean;
   image: boolean;

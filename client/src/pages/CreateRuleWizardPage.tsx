@@ -19,6 +19,8 @@ import {
   X,
   Users2,
   Plus,
+  Repeat,
+  Inbox,
 } from 'lucide-react';
 import { api } from '../api/client.js';
 import { WhatsAppAccount, Conversation } from '../types/index.js';
@@ -48,6 +50,10 @@ export const CreateRuleWizardPage: React.FC = () => {
   const [phoneAddError, setPhoneAddError] = useState<string | null>(null);
   const [destinationCategory, setDestinationCategory] = useState<'ALL' | 'COMMUNITY' | 'COMMUNITY_ANNOUNCEMENT' | 'GROUP' | 'INDIVIDUAL'>('ALL');
   const [destinationSearch, setDestinationSearch] = useState('');
+
+  // Direction & Two-Way Sync
+  const [direction, setDirection] = useState<'RECEIVED' | 'SENT' | 'BOTH'>('BOTH');
+  const [bidirectional, setBidirectional] = useState<boolean>(false);
 
   // Behavior configuration
   const [messageTypes, setMessageTypes] = useState({
@@ -227,6 +233,8 @@ export const CreateRuleWizardPage: React.FC = () => {
       whatsappAccountId: selectedAccountId,
       sourceConversationId: selectedSourceId,
       destinationConversationIds: selectedDestinationIds,
+      direction,
+      bidirectional,
       messageTypes,
       formatting,
       schedule,
@@ -777,6 +785,114 @@ export const CreateRuleWizardPage: React.FC = () => {
               />
             </div>
 
+            {/* Message Forwarding Direction & Trigger Filter */}
+            <div className="space-y-3 p-4 rounded-xl bg-gradient-to-br from-emerald-50/50 via-white to-slate-50 border border-emerald-100 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    Message Direction & Trigger Filter
+                  </label>
+                  <p className="text-[11px] text-slate-500">
+                    Choose whether to forward messages received from others, messages you send from your WhatsApp, or both.
+                  </p>
+                </div>
+                <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  Trigger Options
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                {/* BOTH */}
+                <div
+                  onClick={() => setDirection('BOTH')}
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                    direction === 'BOTH'
+                      ? 'border-emerald-600 bg-emerald-50/70 ring-2 ring-emerald-600/20 shadow-xs'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                      direction === 'BOTH' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      <Repeat className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="font-bold text-slate-900 text-xs">Both (Recommended)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-snug">
+                    Forward messages you send <span className="font-semibold text-emerald-700">AND</span> messages received from other contacts.
+                  </p>
+                </div>
+
+                {/* RECEIVED */}
+                <div
+                  onClick={() => setDirection('RECEIVED')}
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                    direction === 'RECEIVED'
+                      ? 'border-emerald-600 bg-emerald-50/70 ring-2 ring-emerald-600/20 shadow-xs'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                      direction === 'RECEIVED' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      <Inbox className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="font-bold text-slate-900 text-xs">Received Only</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-snug">
+                    Only forward incoming messages received from other contacts or group members.
+                  </p>
+                </div>
+
+                {/* SENT */}
+                <div
+                  onClick={() => setDirection('SENT')}
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                    direction === 'SENT'
+                      ? 'border-emerald-600 bg-emerald-50/70 ring-2 ring-emerald-600/20 shadow-xs'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                      direction === 'SENT' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      <Send className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="font-bold text-slate-900 text-xs">Sent Only</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-snug">
+                    Only forward messages you personally type and send from your phone/WhatsApp.
+                  </p>
+                </div>
+              </div>
+
+              {/* TWO-WAY / BIDIRECTIONAL FORWARDING */}
+              <div className="pt-2">
+                <label className="flex items-start gap-3 p-3.5 rounded-xl bg-white border border-slate-200 hover:border-emerald-300 transition-colors cursor-pointer shadow-2xs">
+                  <input
+                    type="checkbox"
+                    checked={bidirectional}
+                    onChange={(e) => setBidirectional(e.target.checked)}
+                    className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 mt-0.5"
+                  />
+                  <div>
+                    <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                      <span>Enable Two-Way Forwarding (Bidirectional)</span>
+                      <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.2 rounded border border-blue-200">
+                        Sync Replies
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Automatically forward messages and replies sent in the Destination conversation(s) back to the Source conversation.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             {/* Message Types */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
@@ -912,6 +1028,22 @@ export const CreateRuleWizardPage: React.FC = () => {
                     </span>
                   ))}
                 </div>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                <span className="font-semibold text-slate-500">Forwarding Direction:</span>
+                <span className="font-bold text-slate-900">
+                  {direction === 'SENT'
+                    ? '📤 Sent Messages Only'
+                    : direction === 'RECEIVED'
+                    ? '📩 Received Messages Only'
+                    : '🔄 Both Sent & Received'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                <span className="font-semibold text-slate-500">Two-Way Forwarding:</span>
+                <span className="font-bold text-slate-900">
+                  {bidirectional ? '🔁 Enabled (Sync Destination Replies)' : 'Disabled'}
+                </span>
               </div>
               <div className="flex justify-between items-center py-1">
                 <span className="font-semibold text-slate-500">Source Attribution Header:</span>
