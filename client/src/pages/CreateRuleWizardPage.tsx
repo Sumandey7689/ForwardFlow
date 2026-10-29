@@ -37,6 +37,12 @@ export const CreateRuleWizardPage: React.FC = () => {
     searchParams.get('destId') ? [searchParams.get('destId')!] : []
   );
 
+  // Source filtering & personal numbers
+  const [sourceCategory, setSourceCategory] = useState<'ALL' | 'COMMUNITY' | 'COMMUNITY_ANNOUNCEMENT' | 'GROUP' | 'INDIVIDUAL'>('ALL');
+  const [sourceSearch, setSourceSearch] = useState('');
+  const [sourcePhoneInput, setSourcePhoneInput] = useState('');
+  const [sourcePhoneAddError, setSourcePhoneAddError] = useState<string | null>(null);
+
   // Destination filtering & personal numbers
   const [phoneInput, setPhoneInput] = useState('');
   const [phoneAddError, setPhoneAddError] = useState<string | null>(null);
@@ -159,6 +165,29 @@ export const CreateRuleWizardPage: React.FC = () => {
       }
       return `+${cleaned}`;
     });
+  };
+
+  const handleAddSourcePhoneNumber = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!sourcePhoneInput.trim()) return;
+    setSourcePhoneAddError(null);
+
+    const parts = sourcePhoneInput.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) return;
+
+    try {
+      const res = await api.post<{ conversations: Conversation[] }>(
+        `/whatsapp/accounts/${selectedAccountId}/custom-numbers`,
+        { phoneNumbers: parts }
+      );
+      await queryClient.invalidateQueries({ queryKey: ['conversations', selectedAccountId] });
+      if (res.conversations && res.conversations.length > 0) {
+        setSelectedSourceId(res.conversations[0].id);
+      }
+      setSourcePhoneInput('');
+    } catch (err: any) {
+      setSourcePhoneAddError(err.message || 'Failed to add source phone number');
+    }
   };
 
   const handleNext = () => {
@@ -302,43 +331,183 @@ export const CreateRuleWizardPage: React.FC = () => {
 
         {/* STEP 2: SELECT SOURCE */}
         {step === 2 && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Step 2: Select Source Conversation</h2>
+              <h2 className="text-lg font-bold text-slate-900">Step 2: Select Source Conversation or Contact</h2>
               <p className="text-xs text-slate-500 mt-1">
-                Select the Community announcement feed or group whose incoming messages should be monitored.
+                Select the Community announcement feed, group, or personal WhatsApp number whose incoming messages should be monitored.
               </p>
             </div>
 
-            <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-              {conversations.map((conv) => (
-                <div
-                  key={conv.id}
-                  onClick={() => setSelectedSourceId(conv.id)}
-                  className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
-                    selectedSourceId === conv.id
-                      ? 'border-emerald-600 bg-emerald-50/60 ring-2 ring-emerald-600/20 shadow-sm'
-                      : 'border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                        selectedSourceId === conv.id
-                          ? 'border-emerald-600 bg-emerald-600 text-white'
-                          : 'border-slate-300'
-                      }`}
-                    >
-                      {selectedSourceId === conv.id && <Check className="w-2.5 h-2.5" />}
-                    </div>
-                    <div>
-                      <div className="font-semibold text-slate-900 text-sm">{conv.name}</div>
-                      <div className="text-xs text-slate-400 font-mono">{conv.providerConversationId}</div>
-                    </div>
+            {/* Direct Personal Phone Number (+91) as Source */}
+            <div className="p-4 rounded-xl bg-gradient-to-br from-slate-50 to-emerald-50/50 border border-emerald-100/80 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                    <Phone className="w-3.5 h-3.5" />
                   </div>
-                  <ConversationTypeBadge type={conv.conversationType} />
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-900">Monitor a Personal WhatsApp Number (P2P)</h3>
+                    <p className="text-[11px] text-slate-500">
+                      Forward incoming messages sent by a personal contact. 10-digit numbers automatically get <span className="font-semibold text-emerald-700">+91</span> added.
+                    </p>
+                  </div>
                 </div>
-              ))}
+                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded-full border border-emerald-200">
+                  Auto +91 India
+                </span>
+              </div>
+
+              <form onSubmit={handleAddSourcePhoneNumber} className="flex gap-2">
+                <div className="relative flex-1">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-xs font-bold text-slate-400">
+                    +91
+                  </div>
+                  <input
+                    type="text"
+                    value={sourcePhoneInput}
+                    onChange={(e) => {
+                      setSourcePhoneInput(e.target.value);
+                      if (sourcePhoneAddError) setSourcePhoneAddError(null);
+                    }}
+                    placeholder="Enter 10-digit number (e.g. 9876543210)"
+                    className="w-full pl-11 pr-3 py-2 text-xs rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 font-mono"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={!sourcePhoneInput.trim()}
+                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add & Select
+                </button>
+              </form>
+
+              {sourcePhoneInput.trim() && (
+                <div className="flex items-center gap-2 text-[11px] text-slate-600">
+                  <span className="font-medium text-slate-400">Auto-formatted as:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {getPhonePreview(sourcePhoneInput).map((fmt, idx) => (
+                      <span key={idx} className="font-semibold text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200 font-mono shadow-2xs">
+                        {fmt}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {sourcePhoneAddError && (
+                <div className="text-[11px] text-rose-600 font-medium flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {sourcePhoneAddError}
+                </div>
+              )}
+            </div>
+
+            {/* Filter Tabs & Search Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+              <div className="flex flex-wrap gap-1 text-xs">
+                {[
+                  { id: 'ALL', label: `All (${conversations.length})` },
+                  { id: 'COMMUNITY', label: `Communities (${conversations.filter((c) => c.conversationType === 'COMMUNITY').length})` },
+                  { id: 'COMMUNITY_ANNOUNCEMENT', label: `Announcements (${conversations.filter((c) => c.conversationType === 'COMMUNITY_ANNOUNCEMENT').length})` },
+                  { id: 'GROUP', label: `Groups (${conversations.filter((c) => c.conversationType === 'GROUP' || c.conversationType === 'COMMUNITY_GROUP').length})` },
+                  { id: 'INDIVIDUAL', label: `Personal Numbers (${conversations.filter((c) => c.conversationType === 'INDIVIDUAL').length})` },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setSourceCategory(tab.id as any)}
+                    className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
+                      sourceCategory === tab.id
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative min-w-[200px]">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={sourceSearch}
+                  onChange={(e) => setSourceSearch(e.target.value)}
+                  placeholder="Search sources..."
+                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
+
+            {/* Source Conversation List */}
+            <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+              {conversations
+                .filter((conv) => {
+                  if (sourceCategory === 'COMMUNITY' && conv.conversationType !== 'COMMUNITY') return false;
+                  if (sourceCategory === 'COMMUNITY_ANNOUNCEMENT' && conv.conversationType !== 'COMMUNITY_ANNOUNCEMENT') return false;
+                  if (sourceCategory === 'GROUP' && conv.conversationType !== 'GROUP' && conv.conversationType !== 'COMMUNITY_GROUP') return false;
+                  if (sourceCategory === 'INDIVIDUAL' && conv.conversationType !== 'INDIVIDUAL') return false;
+
+                  if (sourceSearch.trim()) {
+                    const q = sourceSearch.toLowerCase();
+                    const matchName = conv.name.toLowerCase().includes(q);
+                    const matchJid = conv.providerConversationId.toLowerCase().includes(q);
+                    if (!matchName && !matchJid) return false;
+                  }
+                  return true;
+                })
+                .map((conv) => (
+                  <div
+                    key={conv.id}
+                    onClick={() => setSelectedSourceId(conv.id)}
+                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                      selectedSourceId === conv.id
+                        ? 'border-emerald-600 bg-emerald-50/60 ring-2 ring-emerald-600/20 shadow-sm'
+                        : 'border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                          selectedSourceId === conv.id
+                            ? 'border-emerald-600 bg-emerald-600 text-white'
+                            : 'border-slate-300'
+                        }`}
+                      >
+                        {selectedSourceId === conv.id && <Check className="w-2.5 h-2.5" />}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-slate-900 text-sm flex items-center gap-2">
+                          {conv.conversationType === 'INDIVIDUAL' ? (
+                            <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                          ) : null}
+                          <span>{conv.name}</span>
+                        </div>
+                        <div className="text-xs text-slate-400 font-mono">{conv.providerConversationId}</div>
+                      </div>
+                    </div>
+                    <ConversationTypeBadge type={conv.conversationType} />
+                  </div>
+                ))}
+
+              {conversations.filter((conv) => {
+                if (sourceCategory === 'COMMUNITY' && conv.conversationType !== 'COMMUNITY') return false;
+                if (sourceCategory === 'COMMUNITY_ANNOUNCEMENT' && conv.conversationType !== 'COMMUNITY_ANNOUNCEMENT') return false;
+                if (sourceCategory === 'GROUP' && conv.conversationType !== 'GROUP' && conv.conversationType !== 'COMMUNITY_GROUP') return false;
+                if (sourceCategory === 'INDIVIDUAL' && conv.conversationType !== 'INDIVIDUAL') return false;
+                if (sourceSearch.trim()) {
+                  const q = sourceSearch.toLowerCase();
+                  return conv.name.toLowerCase().includes(q) || conv.providerConversationId.toLowerCase().includes(q);
+                }
+                return true;
+              }).length === 0 && (
+                <div className="p-8 text-center text-slate-400 text-xs border border-dashed rounded-xl">
+                  No source conversations found matching your filter.
+                </div>
+              )}
             </div>
           </div>
         )}

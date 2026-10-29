@@ -78,14 +78,78 @@ export class ForwardingEngine {
       }
 
       // 2. Locate source conversation in database
-      const sourceConversation = await prisma.conversation.findUnique({
+      const rawSourceJid = message.sourceJid;
+      const cleanDigits = rawSourceJid.replace(/@.*$/, '').replace(/\D/g, '');
+
+      const orConditions: any[] = [
+        { providerConversationId: rawSourceJid },
+      ];
+
+      if (cleanDigits) {
+        orConditions.push(
+          { providerConversationId: `${cleanDigits}@s.whatsapp.net` },
+          { providerConversationId: `+${cleanDigits}@s.whatsapp.net` }
+        );
+        if (cleanDigits.startsWith('91') && cleanDigits.length === 12) {
+          const tenDigits = cleanDigits.slice(2);
+          orConditions.push(
+            { providerConversationId: `${tenDigits}@s.whatsapp.net` },
+            { providerConversationId: `+${tenDigits}@s.whatsapp.net` }
+          );
+        } else if (cleanDigits.length === 10) {
+          orConditions.push(
+            { providerConversationId: `91${cleanDigits}@s.whatsapp.net` },
+            { providerConversationId: `+91${cleanDigits}@s.whatsapp.net` }
+          );
+        }
+      }
+
+      let sourceConversation = await prisma.conversation.findFirst({
         where: {
-          whatsappAccountId_providerConversationId: {
-            whatsappAccountId: message.accountId,
-            providerConversationId: message.sourceJid,
-          },
+          whatsappAccountId: message.accountId,
+          OR: orConditions,
         },
       });
+
+      // If untracked individual chat, auto-register it so it can be monitored / forwarded
+      if (!sourceConversation && !rawSourceJid.endsWith('@g.us') && cleanDigits) {
+        const canonicalDigits = cleanDigits.length === 10 ? `91${cleanDigits}` : cleanDigits;
+        const canonicalJid = `${canonicalDigits}@s.whatsapp.net`;
+        const formattedName =
+          message.senderName ||
+          (canonicalDigits.startsWith('91') && canonicalDigits.length === 12
+            ? `+91 ${canonicalDigits.slice(2, 7)} ${canonicalDigits.slice(7)}`
+            : `+${canonicalDigits}`);
+
+        sourceConversation = await prisma.conversation.upsert({
+          where: {
+            whatsappAccountId_providerConversationId: {
+              whatsappAccountId: message.accountId,
+              providerConversationId: canonicalJid,
+            },
+          },
+          update: {
+            name: message.senderName || formattedName,
+            canReceiveMessages: true,
+            canSendMessages: true,
+            lastActivityAt: new Date(),
+          },
+          create: {
+            whatsappAccountId: message.accountId,
+            providerConversationId: canonicalJid,
+            name: formattedName,
+            conversationType: 'INDIVIDUAL',
+            canReceiveMessages: true,
+            canSendMessages: true,
+            lastActivityAt: new Date(),
+            capabilityMetadata: JSON.stringify({
+              phoneNumber: canonicalDigits,
+              formattedPhone: formattedName,
+              isPersonalNumber: true,
+            }),
+          },
+        });
+      }
 
       if (!sourceConversation) {
         // Message from untracked conversation
@@ -163,7 +227,20 @@ export class ForwardingEngine {
           const destConv = dest.destinationConversation;
 
           // Loop Prevention: Do not forward to same conversation
-          if (destConv.id === sourceConversation.id || destConv.providerConversationId === message.sourceJid) {
+          const cleanDest = destConv.providerConversationId.replace(/@.*$/, '').replace(/\D/g, '');
+          const isSamePhone = Boolean(
+            cleanDigits &&
+            cleanDest &&
+            (cleanDigits === cleanDest ||
+              (cleanDigits.length === 12 && cleanDigits.startsWith('91') && cleanDigits.slice(2) === cleanDest) ||
+              (cleanDest.length === 12 && cleanDest.startsWith('91') && cleanDest.slice(2) === cleanDigits))
+          );
+
+          if (
+            destConv.id === sourceConversation.id ||
+            destConv.providerConversationId === message.sourceJid ||
+            isSamePhone
+          ) {
             continue;
           }
 

@@ -351,7 +351,10 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
       });
 
       // Allow background worker execution
-      await new Promise((r) => setTimeout(r, 600));
+      for (let i = 0; i < 30; i++) {
+        if (provider.getSentMessages().length >= 2) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
 
       const sentMessages = provider.getSentMessages();
       expect(sentMessages.length).toBe(2);
@@ -370,6 +373,8 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
 
     it('should prevent loop: drop messages with fromMe = true', async () => {
       const provider = WhatsAppProviderFactory.getInstance(accountId) as MockWhatsAppProvider;
+      // Wait for any previous pending jobs to settle before clearing
+      await new Promise((r) => setTimeout(r, 200));
       provider.clearSentMessages();
 
       provider.simulateIncomingMessage({
@@ -381,6 +386,56 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
 
       await new Promise((r) => setTimeout(r, 400));
       expect(provider.getSentMessages().length).toBe(0);
+    });
+
+    it('should automatically forward messages from a personal contact source to personal destination (P2P)', async () => {
+      const provider = WhatsAppProviderFactory.getInstance(accountId) as MockWhatsAppProvider;
+      provider.clearSentMessages();
+
+      // 1. Add source personal number
+      const addRes = await request(app)
+        .post(`/api/v1/whatsapp/accounts/${accountId}/custom-numbers`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ phoneNumbers: ['9876543210'] });
+
+      expect(addRes.status).toBe(200);
+      expect(addRes.body.data.conversations.length).toBeGreaterThan(0);
+      const sourceContactConvId = addRes.body.data.conversations[0].id;
+
+      // 2. Create forwarding rule from this contact to another personal number
+      const ruleRes = await request(app)
+        .post('/api/v1/forwarding-rules')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'P2P Contact -> Direct Client Personal',
+          whatsappAccountId: accountId,
+          sourceConversationId: sourceContactConvId,
+          customPhoneNumbers: ['9123456789'],
+        });
+
+      expect(ruleRes.status).toBe(201);
+
+      // 3. Simulate incoming message from this contact (with WhatsApp Multi-Device JID format)
+      provider.simulateIncomingMessage({
+        id: 'msg_p2p_incoming_001',
+        sourceJid: '919876543210@s.whatsapp.net',
+        senderJid: '919876543210:0@s.whatsapp.net',
+        senderName: 'VIP Client',
+        textBody: 'Hello, need urgent assistance on invoice #1042',
+        messageType: 'text',
+        fromMe: false,
+      });
+
+      // 4. Wait for processing
+      for (let i = 0; i < 30; i++) {
+        if (provider.getSentMessages().length >= 1) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      const p2pSent = provider.getSentMessages();
+      expect(p2pSent.length).toBe(1);
+      expect(p2pSent[0].destinationJid).toBe('919123456789@s.whatsapp.net');
+      expect(p2pSent[0].payload.text).toContain('Hello, need urgent assistance on invoice #1042');
     });
 
     it('should enforce idempotency and never process duplicate message twice for the same rule', async () => {
@@ -434,7 +489,7 @@ describe('WhatsApp Community Auto Forwarder SaaS - Comprehensive Test Suite', ()
       expect(res.body.success).toBe(true);
       expect(res.body.data.metrics.totalAccounts).toBe(1);
       expect(res.body.data.metrics.connectedAccounts).toBe(1);
-      expect(res.body.data.metrics.activeRules).toBe(2);
+      expect(res.body.data.metrics.activeRules).toBe(3);
       expect(res.body.data.metrics.messagesReceivedToday).toBeGreaterThan(0);
       expect(res.body.data.metrics.forwardingAttemptsToday).toBeGreaterThan(0);
       expect(res.body.data.hourlyActivity.length).toBe(24);

@@ -179,8 +179,11 @@ export class BaileysProvider implements IWhatsAppProvider {
 
   private normalizeIncomingMessage(msg: proto.IWebMessageInfo): NormalizedMessage | null {
     const key = msg.key;
-    const sourceJid = key.remoteJid;
-    if (!sourceJid || !key.id) return null;
+    const rawSource = key.remoteJid;
+    if (!rawSource || !key.id) return null;
+    const sourceJid = jidNormalizedUser(rawSource);
+    const rawSender = key.participant || rawSource;
+    const senderJid = rawSender ? jidNormalizedUser(rawSender) : sourceJid;
 
     const message = msg.message;
     if (!message) return null;
@@ -219,7 +222,7 @@ export class BaileysProvider implements IWhatsAppProvider {
       id: key.id,
       accountId: this.accountId,
       sourceJid,
-      senderJid: key.participant || sourceJid,
+      senderJid,
       senderName: msg.pushName || undefined,
       messageType,
       textBody,
@@ -353,18 +356,47 @@ export class BaileysProvider implements IWhatsAppProvider {
     }
 
     try {
+      let targetJid = destinationJid.trim();
+      if (targetJid.endsWith('@s.whatsapp.net') || !targetJid.includes('@')) {
+        const parts = targetJid.split('@');
+        let digits = parts[0].replace(/\D/g, '');
+        if (digits.length === 10) {
+          digits = '91' + digits;
+        }
+        targetJid = `${digits}@s.whatsapp.net`;
+      } else {
+        targetJid = jidNormalizedUser(targetJid);
+      }
+
+      // If destination is an individual personal number, verify & pre-warm encryption keys via onWhatsApp
+      if (targetJid.endsWith('@s.whatsapp.net')) {
+        try {
+          const onWaResults = await this.sock.onWhatsApp(targetJid);
+          if (onWaResults && onWaResults.length > 0) {
+            if (onWaResults[0].exists && onWaResults[0].jid) {
+              targetJid = onWaResults[0].jid;
+            } else if (onWaResults[0].exists === false) {
+              logger.warn({ targetJid }, 'Target WhatsApp number reported as not registered on WhatsApp');
+            }
+          }
+        } catch (onWaErr: any) {
+          logger.warn({ targetJid, err: onWaErr.message }, 'onWhatsApp pre-verification failed, sending directly');
+        }
+      }
+
       let result: proto.WebMessageInfo | undefined;
+      const textContent = (payload.text || '').trim();
 
       switch (payload.messageType) {
         case 'text':
-          result = await this.sock.sendMessage(destinationJid, {
-            text: payload.text || '',
+          result = await this.sock.sendMessage(targetJid, {
+            text: textContent || ' ',
           });
           break;
 
         case 'image':
           if (!payload.mediaBuffer) throw new Error('Missing image buffer');
-          result = await this.sock.sendMessage(destinationJid, {
+          result = await this.sock.sendMessage(targetJid, {
             image: payload.mediaBuffer,
             caption: payload.caption,
           });
@@ -372,7 +404,7 @@ export class BaileysProvider implements IWhatsAppProvider {
 
         case 'video':
           if (!payload.mediaBuffer) throw new Error('Missing video buffer');
-          result = await this.sock.sendMessage(destinationJid, {
+          result = await this.sock.sendMessage(targetJid, {
             video: payload.mediaBuffer,
             caption: payload.caption,
           });
@@ -380,7 +412,7 @@ export class BaileysProvider implements IWhatsAppProvider {
 
         case 'audio':
           if (!payload.mediaBuffer) throw new Error('Missing audio buffer');
-          result = await this.sock.sendMessage(destinationJid, {
+          result = await this.sock.sendMessage(targetJid, {
             audio: payload.mediaBuffer,
             mimetype: payload.mediaMimeType || 'audio/mp4',
           });
@@ -388,7 +420,7 @@ export class BaileysProvider implements IWhatsAppProvider {
 
         case 'document':
           if (!payload.mediaBuffer) throw new Error('Missing document buffer');
-          result = await this.sock.sendMessage(destinationJid, {
+          result = await this.sock.sendMessage(targetJid, {
             document: payload.mediaBuffer,
             mimetype: payload.mediaMimeType || 'application/octet-stream',
             fileName: payload.mediaFilename || 'file',
@@ -397,8 +429,8 @@ export class BaileysProvider implements IWhatsAppProvider {
           break;
 
         default:
-          result = await this.sock.sendMessage(destinationJid, {
-            text: payload.text || '',
+          result = await this.sock.sendMessage(targetJid, {
+            text: textContent || ' ',
           });
       }
 
